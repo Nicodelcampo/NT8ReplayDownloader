@@ -12,7 +12,7 @@ Copy only `AddOns/ReplayDownloaderEdgeLab.cs` to:
 Documents\NinjaTrader 8\bin\Custom\AddOns\
 ```
 
-Then compile with F5 and open **Control Center → Tools → EdgeLab Replay Downloader**. Do not copy `upstream/ReplayDownloader.cs.txt`; it is retained only as provenance.
+Then compile with F5 and open **Control Center → Tools → EdgeLab Replay Downloader**. The unsafe upstream add-on remains available only in Git history, not in this hardened branch.
 
 ## Hardened contract
 
