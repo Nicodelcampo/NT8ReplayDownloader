@@ -47,7 +47,7 @@ namespace NinjaTrader.Gui.NinjaScript
  internal sealed class RequestResult{public RequestState State;public ErrorCode Code;public string Message;}
  public class EdgeLabReplayDownloaderWindow:NTWindow,IWorkspacePersistence
  {
-  const string Build="EDGE_NT8RD_HARDENED_V4_LIVECONVERT",Upstream="d4a9c7aa2048846ab6e6aa45b8f23530c5d60af3",Verified="8.1.8.2",NoData="no market replay data";
+  const string Build="EDGE_NT8RD_HARDENED_V5_ATOMICCSV",Upstream="d4a9c7aa2048846ab6e6aa45b8f23530c5d60af3",Verified="8.1.8.2",NoData="no market replay data";
   const int HeaderBytes=44*80,TimeoutMinutes=10;
   static readonly Regex ContractRx=new Regex(@"^[A-Za-z0-9]{1,8}\s+[0-9]{2}-[0-9]{2}$",RegexOptions.Compiled);
   TextBox contracts,from,to,delay,csvdir,pyexe,repo,pqroot,log;Button go,stop;volatile bool running,cancel;EdgeProgress active;
@@ -88,15 +88,19 @@ namespace NinjaTrader.Gui.NinjaScript
   void ExportCsv(Instrument i,string contract,DateTime d,string cdir)
   {string csv=Path.Combine(cdir,i.FullName,d.ToString("yyyyMMdd",CultureInfo.InvariantCulture)+".csv");string sha,hd;
    if(File.Exists(csv)&&new FileInfo(csv).Length>0){if(Hash(csv,out sha,out hd))Manifest(contract,d,"CSV_SKIP_EXISTING",csv,null,sha,"NOT_REQUESTED","csv exists");else Manifest(contract,d,"ABSTAIN_CSV_HASH_FAILED",csv,null,"","NOT_REQUESTED",hd);return;}
-   try{Directory.CreateDirectory(Path.GetDirectoryName(csv));Exception err=null;
-    Globals.RandomDispatcher.Invoke(new Action(()=>{try{MarketReplay.DumpMarketDepth(i,d.AddDays(1),d.AddDays(1),csv);}catch(Exception ex){err=ex;}}));
+   // Se escribe a <dia>.csv.partial y solo se renombra a .csv cuando esta completo y validado: la conversion
+   // por dia corre en paralelo y antes podia leer el CSV del dia siguiente a medio escribir (IntCastingNaNError).
+   string part=csv+".partial";
+   try{Directory.CreateDirectory(Path.GetDirectoryName(csv));if(File.Exists(part))File.Delete(part);Exception err=null;
+    Globals.RandomDispatcher.Invoke(new Action(()=>{try{MarketReplay.DumpMarketDepth(i,d.AddDays(1),d.AddDays(1),part);}catch(Exception ex){err=ex;}}));
     if(err!=null)throw err;
-    if(!File.Exists(csv)||new FileInfo(csv).Length==0)throw new IOException("empty or missing csv");
-    string first;using(StreamReader r=new StreamReader(csv))first=r.ReadLine()??"";
+    if(!File.Exists(part)||new FileInfo(part).Length==0)throw new IOException("empty or missing csv");
+    string first;using(StreamReader r=new StreamReader(part))first=r.ReadLine()??"";
     if(!(first.StartsWith("L1;")||first.StartsWith("L2;")))throw new InvalidDataException("unexpected first record");
+    File.Move(part,csv);
     if(!Hash(csv,out sha,out hd))throw new IOException(hd);
     Manifest(contract,d,"CSV_EXPORTED",csv,null,sha,"DumpMarketDepth","bytes="+new FileInfo(csv).Length.ToString(CultureInfo.InvariantCulture));Log("CSV  "+d.ToString("yyyy-MM-dd")+" "+contract+" -> "+csv);
-   }catch(Exception ex){string q="";try{if(File.Exists(csv))q=Quarantine(csv);}catch{}Manifest(contract,d,"ABSTAIN_CSV_EXPORT",csv,null,"","DumpMarketDepth",ex.GetType().Name+(q.Length>0?" quarantined="+q:""));Log("CSV ABSTAIN "+d.ToString("yyyy-MM-dd")+" "+contract+" "+ex.GetType().Name);}
+   }catch(Exception ex){string q="";try{if(File.Exists(part))q=Quarantine(part);else if(File.Exists(csv))q=Quarantine(csv);}catch{}Manifest(contract,d,"ABSTAIN_CSV_EXPORT",csv,null,"","DumpMarketDepth",ex.GetType().Name+(q.Length>0?" quarantined="+q:""));Log("CSV ABSTAIN "+d.ToString("yyyy-MM-dd")+" "+contract+" "+ex.GetType().Name);}
   }
   Task convQ=Task.FromResult(0);readonly object convLock=new object();
   // One conversion at a time (single writer): per-day passes and the final pass run strictly in order.
